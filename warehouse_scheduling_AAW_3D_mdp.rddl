@@ -1,0 +1,259 @@
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+//
+//The AAW model of warehouse scheduling
+//
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+domain warehouse_scheduling_AAW_3D_mdp{
+	
+	requirements = {
+		concurrent,
+		constrained-state,
+		reward-deterministic
+	}; 
+	
+	types {
+		stacker   : object; 
+		bin       : object;
+		aisle     : object;
+		x_section : object;
+		y_shelf   : object;
+		z_level   : object;
+	};
+	
+	pvariables {
+		
+		//connecting up the locations
+		adjacent-forward(y_shelf, y_shelf)  : { non-fluent, bool, default = false };
+		adjacent-backward(y_shelf, y_shelf) : { non-fluent, bool, default = false };
+		adjacent(x_section, x_section)      : { non-fluent, bool, default = false };
+		
+		//bin's location
+		binAt(bin, aisle, x_section, y_shelf, z_level) : { non-fluent, bool, default = false };
+		
+		//aisle's location
+		aisleAt(aisle, x_section, y_shelf)  : { non-fluent, bool, default = false };
+		
+		inboundBase(x_section, y_shelf)  : { non-fluent, bool, default = false };
+		outboundBase(x_section, y_shelf) : { non-fluent, bool, default = false };
+		
+		//Specify which aisle the stacker belongs to
+		stacker(stacker, aisle): { non-fluent, bool, default = false };
+		
+		//the location where the inbound items will be stored
+		inboundItemAt(x_section, y_shelf, z_level)   : { non-fluent, bool, default = false };
+		
+		//an stored item's location
+		itemAt(x_section, y_shelf, z_level)    : { state-fluent, bool, default = false };
+		
+		//the location where the outbound items be stored
+		outboundItemAt(x_section, y_shelf, z_level)  :  { state-fluent, bool, default = false };
+		
+		//an stacker's location 
+		stackerAt(stacker, x_section, y_shelf) : { state-fluent, bool, default = false };
+		
+		//Has the bin been used
+		binUsed(bin) : { state-fluent, bool, default = false };
+		
+		//Whether the item was taken away or inbound
+        itemTaken(stacker)  : { state-fluent, bool, default = false };
+		itemInbound(stacker): { state-fluent, bool, default = false };
+		
+		//Whether the item is stored or outbound
+		itemStored(stacker)   : { state-fluent, bool, default = false };
+		itemOutbound(stacker) : { state-fluent, bool, default = false };
+		stacker_moved(stacker) : { state-fluent, bool, default = false };
+		
+		num_InboundItemAt(stacker) : { state-fluent, integer, default = 0 };
+		num_OutboundItemAt(stacker) : { state-fluent, integer, default = 0 };
+		num_Outbound : { state-fluent, integer, default = 0 };
+		num_BinUsed : { state-fluent, integer, default = 0 };
+		
+		//time required to fetch/store an item
+		time(stacker)  : { state-fluent, real, default = 0.0 };
+		
+		//actions
+		move(stacker)      : { action-fluent, bool, default = false }; 
+		forward(stacker)   : { action-fluent, bool, default = false };
+		back(stacker)      : { action-fluent, bool, default = false };
+		fetch(stacker)     : { action-fluent, bool, default = false };
+		store(stacker)     : { action-fluent, bool, default = false };
+		inbound(stacker)   : { action-fluent, bool, default = false };
+		outbound(stacker)  : { action-fluent, bool, default = false };
+		
+	};
+	
+	cpfs {
+		
+	stackerAt'(?s, ?x, ?y) = 
+			
+			if ( outboundBase(?x, ?y) ^ (itemOutbound(?s) | num_OutboundItemAt(?s) == 0) ^ stackerAt(?s, ?x, ?y) )
+				then KronDelta(true)
+			
+			//stay at the outboundBase or inboundBase to prevent out of bounds
+			else if( (forward(?s) | back(?s)) ^ (outboundBase(?x, ?y) | inboundBase(?x, ?y)) ^ stackerAt(?s, ?x, ?y)  ^  exists_{?x2 : x_section, ?l : aisle}[aisleAt(?l, ?x2, ?y) ^ stacker(?s, ?l) ^ (adjacent(?x, ?x2) | adjacent(?x2, ?x))])
+				then KronDelta(true)
+			
+			else if ( move(?s) ^ outboundBase(?x, ?y) ^ (~itemOutbound(?s) | num_OutboundItemAt(?s) ~= 0) ^ exists_{?x2 : x_section, ?l : aisle}[stackerAt(?s, ?x, ?y) ^ stacker(?s, ?l) ^ adjacent(?x, ?x2) ^ aisleAt(?l, ?x2, ?y)] )
+				then KronDelta(false)
+			
+			 
+			//stacker outbounds the items at outboundBase and moves this location
+			else if ( move(?s) ^ (~itemOutbound(?s) | num_OutboundItemAt(?s) ~= 0) ^ exists_{?x2 : x_section, ?l : aisle}[stackerAt(?s, ?x2, ?y) ^ stacker(?s, ?l) ^ adjacent(?x2, ?x) ^ aisleAt(?l, ?x, ?y) ^ outboundBase(?x2, ?y)] )
+				then KronDelta(true)
+			
+			//stacker inbounds the items at inboundBase and leaves this location
+			else if ( move(?s) ^ itemInbound(?s) ^ exists_{?x2 : x_section, ?l : aisle}[stackerAt(?s, ?x, ?y) ^ stacker(?s, ?l) ^ adjacent(?x, ?x2) ^ aisleAt(?l, ?x2, ?y)^ inboundBase(?x, ?y)] )
+				then KronDelta(false)
+			
+			//stacker inbounds the items at inboundBase and moves to this location	
+			else if ( move(?s) ^ itemInbound(?s) ^ exists_{?x2 : x_section, ?l : aisle}[stackerAt(?s, ?x2, ?y) ^ stacker(?s, ?l) ^ inboundBase(?x2, ?y) ^ adjacent(?x2, ?x) ^ aisleAt(?l, ?x, ?y)] )
+				then KronDelta(true)
+				
+			//no item to take or store ,just to leave or move in the aisle
+			else if( forward(?s) ^ exists_{?y2 : y_shelf, ?l : aisle}[stackerAt(?s, ?x, ?y) ^ stacker(?s ,?l)  ^ aisleAt(?l, ?x, ?y) ^ adjacent-forward(?y, ?y2) ^ aisleAt(?l, ?x, ?y2)])
+				then KronDelta(false)
+			else if( back(?s) ^ exists_{?y2 : y_shelf, ?l : aisle}[stackerAt(?s, ?x, ?y) ^ stacker(?s, ?l) ^ aisleAt(?l, ?x, ?y) ^ adjacent-backward(?y, ?y2) ^ aisleAt(?l, ?x, ?y2)])
+				then KronDelta(false)
+			else if( forward(?s) ^ exists_{?y2 : y_shelf, ?l : aisle}[stackerAt(?s, ?x, ?y2) ^ stacker(?s, ?l) ^ aisleAt(?l, ?x, ?y2) ^ adjacent-forward(?y2, ?y) ^ aisleAt(?l, ?x, ?y)])	
+				then KronDelta(true)
+			else if( back(?s) ^ exists_{?y2 : y_shelf, ?l : aisle}[stackerAt(?s, ?x, ?y2) ^ stacker(?s, ?l) ^ aisleAt(?l, ?x, ?y2) ^ adjacent-backward(?y2, ?y) ^ aisleAt(?l, ?x, ?y)])	
+				then KronDelta(true)
+			
+			else if( forward(?s) ^ stackerAt(?s, ?x, ?y) ^ exists_{?x2 : x_section, ?l :aisle}[aisleAt(?l, ?x, ?y) ^ stacker(?s, ?l) ^ outboundBase(?x2, ?y) ^ (adjacent(?x, ?x2) | adjacent(?x, ?x2))])
+				then KronDelta(true)
+			else if( back(?s) ^ stackerAt(?s, ?x, ?y) ^ exists_{?x2 : x_section, ?l :aisle}[aisleAt(?l, ?x, ?y) ^ stacker(?s, ?l) ^ inboundBase(?x2, ?y) ^ (adjacent(?x, ?x2) | adjacent(?x, ?x2))])
+				then KronDelta(true)	
+			
+			//stacker leaves this location after storing or taking the items
+			else if ( forward(?s)  ^ exists_{?y2 : y_shelf, ?l : aisle}[stackerAt(?s, ?x, ?y) ^ stacker(?s, ?l) ^ aisleAt(?l, ?x, ?y) ^ adjacent-forward(?y, ?y2) ^ aisleAt(?l, ?x, ?y2) ^ itemStored(?s)] )
+				then KronDelta(false)
+			else if ( forward(?s) ^ exists_{?y2 : y_shelf, ?l : aisle}[stackerAt(?s, ?x, ?y) ^ adjacent-forward(?y, ?y2) ^ aisleAt(?l, ?x, ?y) ^ stacker(?s, ?l) ^ aisleAt(?l, ?x, ?y2) ^ itemTaken(?s)] )
+				then KronDelta(false)
+			else if ( back(?s) ^ exists_{?y2 : y_shelf, ?l : aisle}[stackerAt(?s, ?x, ?y) ^ stacker(?s, ?l) ^ aisleAt(?l, ?x, ?y) ^ adjacent-backward(?y, ?y2) ^ aisleAt(?l, ?x, ?y2) ^ itemStored(?s)] )
+				then KronDelta(false)			
+			else if ( back(?s) ^ exists_{?y2 : y_shelf, ?l : aisle}[stackerAt(?s, ?x, ?y) ^ stacker(?s, ?l) ^ aisleAt(?l, ?x, ?y) ^ adjacent-backward(?y, ?y2) ^ aisleAt(?l, ?x, ?y2) ^ itemTaken(?s)] )
+				then KronDelta(false)
+            
+			//stacker moves this location after storing or taking the item
+			else if ( forward(?s) ^ exists_{?y2 : y_shelf, ?l : aisle}[stackerAt(?s, ?x, ?y2) ^ stacker(?s, ?l) ^ aisleAt(?l, ?x, ?y2) ^ adjacent-forward(?y2, ?y) ^ aisleAt(?l, ?x, ?y) ^ itemStored(?s)] )
+				then KronDelta(true)
+			else if ( forward(?s) ^ exists_{?y2 : y_shelf, ?l : aisle}[stackerAt(?s, ?x, ?y2) ^ stacker(?s, ?l) ^ aisleAt(?l, ?x, ?y2) ^ adjacent-forward(?y2, ?y) ^ aisleAt(?l, ?x, ?y) ^ itemTaken(?s)] )
+				then KronDelta(true)
+			else if ( back(?s) ^ exists_{?y2 : y_shelf, ?l : aisle}[stackerAt(?s, ?x, ?y2) ^ stacker(?s, ?l) ^ aisleAt(?l, ?x, ?y2) ^ adjacent-backward(?y2, ?y) ^ aisleAt(?l, ?x, ?y) ^ itemStored(?s) ] ) 
+				then KronDelta(true)
+			else if ( back(?s) ^ exists_{?y2 : y_shelf, ?l : aisle}[stackerAt(?s, ?x, ?y2) ^ stacker(?s, ?l) ^ aisleAt(?l, ?x, ?y2) ^ adjacent-backward(?y2, ?y) ^ aisleAt(?l, ?x, ?y) ^ itemTaken(?s)] )
+				then KronDelta(true)
+
+			////////////////////////////
+			else if ( move(?s) ^ exists_{?x2 : x_section, ?l : aisle}[stackerAt(?s, ?x, ?y) ^ stacker(?s, ?l) ^ (adjacent(?x, ?x2) | adjacent(?x2, ?x)) ^ aisleAt(?l, ?x, ?y) ^ outboundBase(?x2, ?y) ^ num_InboundItemAt(?s) == 0 ^ num_OutboundItemAt(?s) == 1] )
+				then KronDelta(false)
+			
+			////////////////////////////	
+			else if ( move(?s) ^ exists_{?x2 : x_section, ?l : aisle}[stackerAt(?s, ?x2, ?y) ^ stacker(?s, ?l) ^  outboundBase(?x, ?y) ^ num_InboundItemAt(?s) == 0 ^ num_OutboundItemAt(?s) == 1 ^ (adjacent(?x2, ?x) | adjacent(?x, ?x2)) ^ aisleAt(?l, ?x2, ?y)] )
+				then KronDelta(true)
+			
+			else 
+				KronDelta((stackerAt(?s, ?x, ?y) ^ exists_{?l : aisle}[aisleAt(?l, ?x, ?y) ^ stacker(?s, ?l)]) | (stackerAt(?s, ?x, ?y) ^ (inboundBase(?x, ?y) | outboundBase(?x, ?y))));					
+
+		outboundItemAt'(?x, ?y, ?z) = 
+			if(outboundItemAt(?x, ?y, ?z) ^ itemAt(?x, ?y, ?z))
+				then KronDelta(true)
+			else
+				KronDelta(false);
+	
+				
+		// the reward can be set when num_Outbound == 0 and forall_{?s}[num_OutboundItemAt(?s)] == 0
+		num_Outbound' =  sum_{?x : x_section, ?y : y_shelf, ?z : z_level}[outboundItemAt(?x, ?y, ?z)];
+		
+		itemAt'(?x, ?y, ?z) = 
+			if(exists_{?s : stacker, ?b : bin, ?l : aisle, ?x2 : x_section}[outboundItemAt(?x, ?y, ?z) ^ stackerAt(?s, ?x2, ?y) ^ aisleAt(?l, ?x2, ?y) ^ binAt(?b, ?l, ?x, ?y, ?z) ^ stacker(?s, ?l) ^ fetch(?s)])
+				then KronDelta(false)
+			else if(exists_{?s : stacker, ?b : bin, ?l : aisle, ?x2 : x_section}[inboundItemAt(?x, ?y, ?z) ^ ~itemAt(?x, ?y, ?z) ^ ~outboundItemAt(?x, ?y, ?z) ^ num_InboundItemAt(?s) > 0 ^ binAt(?b, ?l, ?x, ?y, ?z) ^ stackerAt(?s, ?x2, ?y) ^ aisleAt(?l, ?x2, ?y) ^ stacker(?s, ?l) ^ store(?s)])
+				then KronDelta(true)
+			else	
+				KronDelta(itemAt(?x, ?y, ?z));
+		
+		binUsed'(?b) = 
+			if(exists_{?l : aisle, ?x : x_section, ?y : y_shelf, ?z : z_level}[itemAt(?x, ?y, ?z) ^ binAt(?b, ?l, ?x, ?y, ?z)])
+				then KronDelta(true)
+			else if(exists_{?b : bin, ?l : aisle, ?x : x_section, ?y : y_shelf, ?z : z_level}[~outboundItemAt(?x, ?y, ?z) ^ ~itemAt(?x, ?y, ?z) ^ binAt(?b, ?l, ?x, ?y, ?z)])	
+				then KronDelta(false)
+			else	
+				KronDelta(false);
+		
+		num_BinUsed' = sum_{?b : bin}(binUsed(?b));
+		
+		itemStored'(?s) =
+			if(exists_{?l : aisle, ?b : bin, ?x : x_section, ?x2 : x_section, ?y : y_shelf, ?z : z_level}[stackerAt(?s, ?x2, ?y) ^ aisleAt(?l, ?x2, ?y) ^ binAt(?b, ?l, ?x, ?y, ?z) ^ ~binUsed(?b) ^ inboundItemAt(?x, ?y, ?z) ^ stacker(?s, ?l) ^ store(?s)])
+				then KronDelta(true)
+			else
+				KronDelta(false);
+		itemTaken'(?s) = 
+			if(exists_{?l : aisle, ?b : bin, ?x : x_section, ?x2 : x_section, ?y : y_shelf, ?z : z_level}[outboundItemAt(?x, ?y, ?z) ^  binAt(?b, ?l, ?x, ?y, ?z) ^ binUsed(?b) ^ stackerAt(?s, ?x2, ?y) ^ aisleAt(?l, ?x2, ?y) ^ stacker(?s, ?l) ^ fetch(?s)])
+				then KronDelta(true)
+			else  	
+				KronDelta(false);
+				
+		itemInbound'(?s) =
+			if(exists_{?x : x_section, ?y : y_shelf}[stackerAt(?s, ?x, ?y) ^ inboundBase(?x, ?y) ^ num_InboundItemAt(?s) == 1])
+				then KronDelta(true)
+			else 
+				KronDelta(false);
+		
+		itemOutbound'(?s) = 
+			if(exists_{?x : x_section, ?y : y_shelf}[stackerAt(?s, ?x, ?y) ^ outboundBase(?x, ?y) ^ num_OutboundItemAt(?s) == 0])
+				then KronDelta(true)
+			else 
+				KronDelta(false);
+		
+		num_InboundItemAt'(?s) = 
+			if(exists_{?x : x_section, ?y : y_shelf}[stackerAt(?s, ?x, ?y) ^ inboundBase(?x, ?y) ^ inbound(?s) ^ num_InboundItemAt(?s) == 0 ])
+				then 1
+			else if(exists_{?b : bin, ?l : aisle, ?x : x_section, ?y : y_shelf, ?z :  z_level}[inboundItemAt(?x, ?y, ?z) ^ binAt(?b, ?l, ?x, ?y, ?z) ^ binUsed(?b) ^ stacker(?s, ?l)])
+				then 0
+			else	
+				num_InboundItemAt(?s);
+		
+		num_OutboundItemAt'(?s) = 
+			if(exists_{?x : x_section, ?y : y_shelf}[stackerAt(?s, ?x, ?y) ^ outboundBase(?x, ?y) ^ outbound(?s) ^ num_OutboundItemAt(?s) > 0])
+				then 0
+			else if(exists_{?b : bin, ?l : aisle, ?x : x_section, ?x2 : x_section, ?y : y_shelf, ?z :  z_level}[outboundItemAt(?x, ?y, ?z) ^  binAt(?b, ?l, ?x, ?y, ?z) ^ stackerAt(?s, ?x2, ?y) ^ stacker(?s, ?l) ^ aisleAt(?l, ?x2, ?y) ^ itemTaken(?s)])
+				then 1
+			else 
+				num_OutboundItemAt(?s);
+				
+		stacker_moved'(?s) = 
+			if(forward(?s) ^ exists_{?x : x_section, ?y : y_shelf, ?y2 : y_shelf}[stackerAt(?s, ?x, ?y) ^ adjacent-forward(?y, ?y2)])
+				then KronDelta(true)
+			else if(back(?s) ^ exists_{?x : x_section, ?y : y_shelf, ?y2 : y_shelf}[stackerAt(?s, ?x, ?y) ^ adjacent-backward(?y2, ?y)])
+				then KronDelta(true)
+			else
+				KronDelta(false);
+		
+		time'(?s) = 
+			if(exists_{?x : x_section, ?y : y_shelf}[stackerAt(?s, ?x, ?y) ^ inboundBase(?x, ?y) ^ move(?s) ^ num_InboundItemAt(?s) == 1])
+				then time(?s) + 1
+			//else if(exists_{?x : x_section, ?y : y_shelf}[stackerAt(?s, ?x, ?y) ^ ~inboundBase(?x, ?y) ^ ~outboundBase(?x, ?y) ^ (forward(?s) | back(?s))])
+			//	then time(?s) + 1
+			else if(exists_{?x : x_section, ?y : y_shelf}[stackerAt(?s, ?x, ?y) ^ ~inboundBase(?x, ?y) ^ ~outboundBase(?x, ?y) ^ stacker_moved(?s)])
+				then time(?s) + 1
+			else if(itemStored(?s) | itemTaken(?s))
+				then time(?s) + 2
+			else 
+				time(?s);
+		
+		
+	};
+			
+		reward = if (forall_{?s : stacker}( itemOutbound(?s) ^  num_InboundItemAt(?s) == 0 ))
+				then sum_ {?s : stacker}[time(?s)]
+				else
+					0;
+
+    state-action-constraints{
+	
+		forall_{?s : stacker}[(move(?s) + forward(?s) + back(?s)+ inbound(?s) + outbound(?s)+ fetch(?s) + store(?s)) <= 1];
+		
+	};
+	
+}
